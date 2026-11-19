@@ -73,9 +73,18 @@ async function main() {
   function command(data: Record<string, unknown>) {
     const task = serial.then(async () => {
       switch (data.type) {
-        case "timer":
-          session.timer(String(data.action));
+        case "timer": {
+          const { phaseRevision } = data;
+          if (
+            phaseRevision !== undefined &&
+            (typeof phaseRevision !== "number" ||
+              !Number.isSafeInteger(phaseRevision) ||
+              phaseRevision < 0)
+          )
+            throw Error("Invalid timer phase revision.");
+          session.timer(String(data.action), Date.now(), phaseRevision);
           break;
+        }
         case "music":
           session.music(String(data.action));
           break;

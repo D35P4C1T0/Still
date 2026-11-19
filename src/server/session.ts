@@ -3,6 +3,7 @@ import { defaults, validateSettings, type Phase, type Settings, type Snapshot, t
 export class Session {
   settings: Settings;
   phase: Phase = 'focus';
+  phaseRevision = 0;
   completed = 0;
   alarm = 0;
   remaining: number;
@@ -27,6 +28,7 @@ export class Session {
     if (this.remaining === 0) { this.alarm++; this.advance(now, !slept); }
   }
   advance(now = Date.now(), allowAuto = true) {
+    this.phaseRevision++;
     if (this.phase === 'focus') {
       this.completed++;
       this.phase = this.completed >= this.settings.interval ? 'long' : 'short';
@@ -37,13 +39,13 @@ export class Session {
     this.remaining = this.duration();
     this.deadline = this.settings.autoStart && allowAuto ? now + this.remaining : null;
   }
-  timer(action: string, now = Date.now()) {
+  timer(action: string, now = Date.now(), phaseRevision = this.phaseRevision) {
     this.tick(now);
     if (action === 'toggle') this.deadline = this.deadline === null ? now + this.remaining : null;
     else if (action === 'start') { if (this.deadline === null) this.deadline = now + this.remaining; }
     else if (action === 'pause') this.deadline = null;
     else if (action === 'reset') { this.deadline = null; this.remaining = this.duration(); }
-    else if (action === 'skip') this.advance(now);
+    else if (action === 'skip') { if (phaseRevision === this.phaseRevision) this.advance(now); }
     else throw Error('Unknown timer command.');
   }
   music(action: string) {
@@ -64,7 +66,7 @@ export class Session {
     this.queue = tracks.slice(); this.index = start; this.playing = true; this.revision++;
   }
   snapshot(now = Date.now()): Snapshot {
-    return { settings: this.settings, timer: { phase: this.phase, running: this.deadline !== null, deadline: this.deadline,
+    return { settings: this.settings, timer: { phase: this.phase, phaseRevision: this.phaseRevision, running: this.deadline !== null, deadline: this.deadline,
       remaining: this.deadline === null ? this.remaining : Math.max(0, this.deadline - now), completed: this.completed, alarm: this.alarm }, music: { queue: this.queue, index: this.index,
       playing: this.playing, revision: this.revision, player: this.player }, now };
   }

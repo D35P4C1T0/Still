@@ -21,7 +21,7 @@ export class AudioPlayer {
   private advancing = false;
   private destroyed = false;
   private interval: ReturnType<typeof setInterval>;
-  constructor(private advance: (revision: number) => Promise<void>, private failure: (message: string, revision: number, fatal?: boolean) => void) {
+  constructor(private advance: (revision: number) => void, private failure: (message: string, revision: number, fatal?: boolean) => void) {
     this.master.connect(this.context.destination);
     this.interval = setInterval(() => this.tick(), 100);
   }
@@ -132,10 +132,7 @@ export class AudioPlayer {
       this.active.gain.gain.value = 1;
       if (this.active.ready) this.play(this.active);
     }
-    void this.advance(revision).catch(() => {
-      this.failure('Audio connection lost. The overlay will reconnect automatically.', revision);
-      this.destroy();
-    });
+    this.advance(revision);
   }
   destroy() {
     if (this.destroyed) return;

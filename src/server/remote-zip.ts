@@ -69,6 +69,7 @@ export async function extractRemoteTrack(filename: string): Promise<Buffer> {
 }
 export class MusicCache {
   private pending = new Map<string, Promise<string>>();
+  private publishing = Promise.resolve();
   constructor(public folder: string) {}
   async get(filename: string) {
     if (!/^[a-z0-9-]+\.mp3$/.test(filename)) throw Error('Invalid cache filename.');
@@ -83,13 +84,17 @@ export class MusicCache {
     try { await stat(file); return file; } catch { /* Download only on a cache miss. */ }
     const data = await extractRemoteTrack(filename);
     await writeFile(`${file}.part`, data, { mode: 0o600 });
-    await rename(`${file}.part`, file);
-    const files = await Promise.all((await readdir(this.folder)).filter(f => f.endsWith('.mp3')).map(async name => ({ name, ...await stat(join(this.folder, name)) })));
-    let size = files.reduce((sum, f) => sum + f.size, 0);
-    for (const old of files.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-      if (size <= MAX_CACHE) break;
-      if (old.name !== filename) { await unlink(join(this.folder, old.name)); size -= old.size; }
-    }
+    const publish = this.publishing.then(async () => {
+      await rename(`${file}.part`, file);
+      const files = await Promise.all((await readdir(this.folder)).filter(f => f.endsWith('.mp3')).map(async name => ({ name, ...await stat(join(this.folder, name)) })));
+      let size = files.reduce((sum, f) => sum + f.size, 0);
+      for (const old of files.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
+        if (size <= MAX_CACHE) break;
+        if (old.name !== filename) { await unlink(join(this.folder, old.name)); size -= old.size; }
+      }
+    });
+    this.publishing = publish.catch(() => {});
+    await publish;
     return file;
   }
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, mkdir, symlink, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, symlink, rm, readFile, truncate, readdir, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Session } from '../src/server/session.js';
@@ -8,6 +8,7 @@ import { defaults, validateSettings, clock } from '../src/shared.js';
 import { fadeSeconds, fadeGains } from '../src/audio.js';
 import { localLibrary, inside, parseOpenLofi, parseRoyalty, safeMedia, Library, atomicJSON } from '../src/server/library.js';
 import { parseRange } from '../src/server/http.js';
+import { MusicCache } from '../src/server/remote-zip.js';
 
 test('timer pauses against a deadline, resets without counting, and skips with progress', () => {
   const s = new Session(defaults, 0);
@@ -63,6 +64,20 @@ test('skipping advances a full cycle, counts only focus phases, and honors auto-
       assert.equal(s.remaining, s.settings[phase] * 60_000);
       assert.equal(s.deadline !== null, autoStart);
     }
+  }
+});
+test('skip cannot advance a phase that started after the command was issued', () => {
+  for (const tickFirst of [false, true]) {
+    const s = new Session({ ...defaults, focus: 1 / 60 }, 0);
+    s.timer('start', 0);
+    const focusRevision = s.snapshot(500).timer.phaseRevision;
+    if (tickFirst) s.tick(1001);
+    s.timer('skip', 1001, focusRevision);
+    assert.equal(s.snapshot(1001).timer.phase, 'short');
+    assert.equal(s.alarm, 1);
+    s.timer('skip', 1002, s.snapshot(1001).timer.phaseRevision);
+    assert.equal(s.snapshot(1002).timer.phase, 'focus');
+    assert.equal(s.completed, 1);
   }
 });
 test('full cycles choose the long break and reset completed sessions afterwards', () => {
@@ -145,6 +160,33 @@ test('provider failure uses a validated cached catalog without preventing local 
     assert.deepEqual(await library.load('local'), { tracks: [], warning: '' });
     await assert.rejects(library.load('royalty'), /No usable cached catalog/);
   } finally { globalThis.fetch = original; await rm(dir, { recursive: true, force: true }); }
+});
+test('parallel cache misses both succeed when the cache needs eviction', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'still-cache-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const trackLimit = 32 * 1024 * 1024;
+  for (let i = 0; i < 8; i++) {
+    const file = join(folder, `old-${i}.mp3`);
+    await writeFile(file, '');
+    await truncate(file, trackLimit);
+    await utimes(file, 0, 0);
+  }
+  // ZIP with first.mp3 and second.mp3 containing the strings "first" and "second".
+  const archive = Buffer.from('UEsDBBQAAAAAAAAAIQBX7nGSBQAAAAUAAAAJAAAAZmlyc3QubXAzZmlyc3RQSwMEFAAAAAAAAAAhAGkRH7YGAAAABgAAAAoAAABzZWNvbmQubXAzc2Vjb25kUEsBAhQDFAAAAAAAAAAhAFfucZIFAAAABQAAAAkAAAAAAAAAAAAAAIABAAAAAGZpcnN0Lm1wM1BLAQIUAxQAAAAAAAAAIQBpER+2BgAAAAYAAAAKAAAAAAAAAAAAAACAASwAAABzZWNvbmQubXAzUEsFBgAAAAACAAIAbwAAAFoAAAAAAA==', 'base64');
+  t.mock.method(globalThis, 'fetch', async (_: string, init: { method?: string; headers?: { Range: string } }) => {
+    if (init.method === 'HEAD') return new Response(null, { headers: { 'Content-Length': String(archive.length) } });
+    const [start, end] = init.headers!.Range.match(/\d+/g)!.map(Number);
+    return new Response(archive.subarray(start, end + 1), { status: 206, headers: { 'Content-Range': `bytes ${start}-${end}/${archive.length}` } });
+  });
+  const cache = new MusicCache(folder);
+  const results = await Promise.allSettled([cache.get('first.mp3'), cache.get('second.mp3')]);
+  const contents = await Promise.all(results.map(result => {
+    if (result.status === 'rejected') throw result.reason;
+    return readFile(result.value, 'utf8');
+  }));
+  assert.deepEqual(contents, ['first', 'second']);
+  const sizes = await Promise.all((await readdir(folder)).map(async name => (await stat(join(folder, name))).size));
+  assert.ok(sizes.reduce((total, size) => total + size, 0) <= 8 * trackLimit);
 });
 test('queue navigation stops at the end and can restart', () => {
   const s = new Session();

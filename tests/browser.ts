@@ -140,10 +140,14 @@ try {
   await post({ type: 'timer', action: 'reset' });
   await operator.getByRole('button', { name: 'Open settings' }).click();
   await operator.screenshot({ path: '/tmp/still-settings-1080.png' });
+  await post({ type: 'settings', settings: { volume: 17, crossfade: 3 } });
   await operator.getByRole('combobox', { name: /Theme/ }).selectOption('light');
   await operator.getByLabel('Gentle background motion').uncheck();
   await operator.getByRole('button', { name: 'Save preferences' }).click();
   await operator.locator('.room.light.static').waitFor();
+  const savedSettings = (await waitState(s => s.settings.theme === 'light')).settings;
+  assert.equal(savedSettings.volume, 17);
+  assert.equal(savedSettings.crossfade, 3);
   await operator.screenshot({ path: '/tmp/still-light-1080.png' });
   await post({ type: 'settings', settings: { theme: 'dark', motion: true, crossfade: 2, transparent: true } });
   await operator.locator('.room:not(.light)').waitFor();
@@ -157,9 +161,12 @@ try {
   await operator.setViewportSize({ width: 1920, height: 1080 });
   await post({ type: 'settings', settings: { interval: 2, autoStart: false } });
   await operator.waitForFunction(() => getComputedStyle(document.querySelector('.room')!).backgroundColor === 'rgb(16, 28, 27)');
-  await post({ type: 'timer', action: 'skip' });
+  const focusRevision = (await waitState(s => s.timer.phase === 'focus')).timer.phaseRevision;
+  await operator.getByRole('button', { name: 'Skip current phase' }).click();
   await operator.locator('.room.break-time').waitFor();
   await overlay.locator('.room.break-time').waitFor();
+  const lateSkip = await post({ type: 'timer', action: 'skip', phaseRevision: focusRevision });
+  assert.equal(lateSkip.timer.phase, 'short');
   await operator.waitForFunction(() => {
     const color = getComputedStyle(document.querySelector('.room')!).backgroundColor;
     return color !== 'rgb(16, 28, 27)' && color !== 'rgb(8, 39, 37)';
@@ -303,6 +310,22 @@ try {
   await waitState(s => s.music.player === successorId);
   await successor.waitForFunction(() => ((window as any).__audios as HTMLAudioElement[]).some(a => !a.paused && a.readyState >= 3));
   assert.equal(await successor.evaluate(() => (window as any).__bells.length), 0, 'Owner handoff must not replay an old bell.');
+  const contextCount = await successor.evaluate(() => (window as any).__contexts.length as number);
+  let droppedAdvance = false;
+  await successor.route('**/api/command', async route => {
+    if (!droppedAdvance && route.request().postDataJSON().type === 'advance') {
+      droppedAdvance = true;
+      await route.abort();
+    } else await route.continue();
+  });
+  await post({ type: 'select', ids: [id, idFor(join(folder, 'B.wav'))], index: 0 });
+  await successor.waitForFunction(count => {
+    const contexts: AudioContext[] = (window as any).__contexts;
+    return contexts.length > count && contexts[count - 1].state === 'closed' && contexts.at(-1)?.state === 'running';
+  }, contextCount, { timeout: 12_000 });
+  assert.ok(droppedAdvance);
+  const recovered = await waitState(s => s.music.index === 1 && s.music.playing);
+  assert.equal(recovered.music.player, successorId);
   server.kill('SIGTERM');
   await once(server, 'exit');
   await successor.waitForFunction(() => ((window as any).__audios as HTMLAudioElement[]).every(a => !a.src || a.paused));

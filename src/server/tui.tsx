@@ -46,6 +46,7 @@ export function terminal(
   }
   function View() {
     const { columns, rows: height } = useWindowSize();
+    const phaseRevision = session.phaseRevision;
     useInput((input, key) => {
       const inputs =
         key.ctrl ||
@@ -61,7 +62,7 @@ export function terminal(
         const pressed =
           text === "\r" || text === "\n" ? { ...key, return: true } : key;
         pending = pending.then(() => {
-          if (!closed) return keypress(text, pressed);
+          if (!closed) return keypress(text, pressed, phaseRevision);
         });
       }
     });
@@ -278,7 +279,7 @@ export function terminal(
     }
     render();
   }
-  async function keypress(text: string, key: Key) {
+  async function keypress(text: string, key: Key, phaseRevision: number) {
     try {
       if (key.ctrl && text === "c") {
         quit();
@@ -344,6 +345,7 @@ export function terminal(
         await command({
           type: "timer",
           action: { t: "toggle", r: "reset", n: "skip" }[text],
+          phaseRevision,
         });
       else if (text === " " || text === "h" || text === "l")
         await command({

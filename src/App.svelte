@@ -15,6 +15,7 @@
   let ownsAudio = $state(false);
   let enabling = $state(false);
   let draft = $state<Settings>({ ...defaults });
+  let originalSettings = defaults;
   let now = $state(performance.now());
   let localDeadline = $state<number | null>(null);
   let audio: AudioPlayer | null = null;
@@ -25,8 +26,8 @@
   const musicSources = { local: 'Local folder', openlofi: 'Open Lo-Fi · GitHub release', royalty: 'RoyaltyMusicFree' };
   const remaining = $derived(Math.max(0, localDeadline === null ? snapshot?.timer.remaining ?? defaults.focus * 60_000 : localDeadline - now));
   const count = $derived(snapshot?.timer.completed || 0);
-  async function command(data: Record<string, unknown>) {
-    const response = await fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Still': '1' }, body: JSON.stringify(data) });
+  async function command(data: Record<string, unknown>, signal?: AbortSignal) {
+    const response = await fetch('/api/command', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Still': '1' }, body: JSON.stringify(data), signal });
     const result = await response.json();
     if (!response.ok) throw Error(result.error || 'Command failed.');
     return result as Snapshot;
@@ -50,26 +51,48 @@
     try {
       error = '';
       stopAudio();
-      audio = new AudioPlayer(
-        async revision => { await command({ type: 'advance', id, revision }); },
-        (message, revision, fatal = true) => { error = message; if (fatal) void command({ type: 'audioError', id, revision }).catch(() => stopAudio()); },
+      const player = new AudioPlayer(
+        revision => {
+          void command({ type: 'advance', id, revision }, AbortSignal.timeout(6000)).catch(() => {
+            if (audio === player && snapshot?.music.revision === revision) stopAudio();
+          });
+        },
+        (message, revision, fatal = true) => {
+          error = message;
+          if (fatal) void command({ type: 'audioError', id, revision }).catch(() => {
+            if (audio === player) stopAudio();
+          });
+        },
       );
-      await audio.unlock();
+      audio = player;
+      await player.unlock();
+      if (audio !== player) return;
       const claimed = await command({ type: 'claim', id });
+      if (audio !== player) return;
       if (!snapshot || claimed.now >= snapshot.now) receive(claimed);
       if (snapshot?.music.player !== id) { stopAudio(); return; }
-      ownsAudio = true; audio?.sync(snapshot);
+      ownsAudio = true; player.sync(snapshot);
       heartbeat = setInterval(() => {
-        void command({ type: 'pulse', id }).catch(e => { error = e.message; stopAudio(); });
+        void command({ type: 'pulse', id }).catch(e => {
+          if (audio === player) { error = e.message; stopAudio(); }
+        });
       }, 2000);
     } catch (e) { error = (e as Error).message; stopAudio(); }
     finally { enabling = false; }
   }
-  function openSettings() { draft = { ...settings }; showSettings = !showSettings; }
+  function openSettings() {
+    originalSettings = settings;
+    draft = { ...originalSettings };
+    showSettings = !showSettings;
+  }
   async function saveSettings(event: SubmitEvent) {
     event.preventDefault();
-    try { error = ''; await command({ type: 'settings', settings: draft }); showSettings = false; }
-    catch (e) { error = (e as Error).message; }
+    const changes = Object.entries(draft).filter(([key, value]) => value !== originalSettings[key as keyof Settings]);
+    try {
+      error = '';
+      if (changes.length) await command({ type: 'settings', settings: Object.fromEntries(changes) });
+      showSettings = false;
+    } catch (e) { error = (e as Error).message; }
   }
   onMount(() => {
     events = new EventSource(`/api/events?id=${id}`);
@@ -77,7 +100,7 @@
       receive(JSON.parse(event.data));
       if (ownsAudio && snapshot?.music.player !== id) stopAudio();
       if (ownsAudio) audio?.sync(snapshot!);
-      if (overlay && !ownsAudio && !enabling && !snapshot?.music.player) void startAudio();
+      if (overlay && !ownsAudio && !enabling && (!snapshot?.music.player || snapshot.music.player === id)) void startAudio();
     };
     events.onerror = () => { connected = false; stopAudio(); };
     const display = setInterval(() => { now = performance.now(); }, 100);
@@ -103,7 +126,7 @@
         <div class="timer-controls">
           <button class="secondary round" aria-label="Reset current phase" title="Reset" disabled={!connected} onclick={() => run({ type: 'timer', action: 'reset' })}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 2 8M4 4v6h6" /></svg></button>
           <button class="primary round" aria-label={snapshot?.timer.running ? 'Pause session' : 'Begin session'} title={snapshot?.timer.running ? 'Pause' : 'Start'} disabled={!connected} onclick={() => run({ type: 'timer', action: 'toggle' })}><svg viewBox="0 0 24 24" aria-hidden="true">{#if snapshot?.timer.running}<path d="M9 6v12M15 6v12" />{:else}<path d="m9 5 10 7-10 7V5Z" />{/if}</svg></button>
-          <button class="secondary round" aria-label="Skip current phase" title="Skip" disabled={!connected} onclick={() => run({ type: 'timer', action: 'skip' })}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7V5ZM19 5v14" /></svg></button>
+          <button class="secondary round" aria-label="Skip current phase" title="Skip" disabled={!connected} onclick={() => run({ type: 'timer', action: 'skip', phaseRevision: snapshot?.timer.phaseRevision })}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7V5ZM19 5v14" /></svg></button>
         </div>
       {/if}
       <div class="cycle-dots" aria-label={`${count} of ${settings.interval} focus sessions completed`}>{#each Array(settings.interval) as _, i}<span class:done={i < count} class:current={i === count}></span>{/each}</div>

@@ -16,7 +16,7 @@ export interface Track {
 }
 export interface Snapshot {
   settings: Settings;
-  timer: { phase: Phase; running: boolean; deadline: number | null; remaining: number; completed: number; alarm: number };
+  timer: { phase: Phase; phaseRevision: number; running: boolean; deadline: number | null; remaining: number; completed: number; alarm: number };
   music: { queue: Track[]; index: number; playing: boolean; revision: number; player: string | null };
   now: number;
 }
