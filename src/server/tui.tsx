@@ -69,12 +69,34 @@ export function terminal(
     const list = filtered();
     cursor = Math.max(0, Math.min(cursor, list.length - 1));
     const music = session.queue[session.index];
-    const visible = Math.max(1, height - (columns < 58 ? 25 : 22));
+    const visible = Math.max(1, height - (columns < 58 ? 19 : 16));
     const start = Math.max(
       0,
       Math.min(cursor - Math.floor(visible / 2), list.length - visible),
     );
     const track = list[cursor];
+    const accent =
+      session.phase === "short"
+        ? "cyan"
+        : session.phase === "long"
+          ? "blue"
+          : "green";
+    const totalMs =
+      (session.phase === "focus"
+        ? session.settings.focus
+        : session.phase === "short"
+          ? session.settings.short
+          : session.settings.long) * 60_000;
+    const progress =
+      totalMs > 0
+        ? Math.max(0, Math.min(1, 1 - session.remaining / totalMs))
+        : 0;
+    const barWidth = Math.max(12, Math.min(32, columns - 10));
+    const filled = Math.round(progress * barWidth);
+    const progressBar = "━".repeat(filled) + "░".repeat(barWidth - filled);
+    const cycleDots = Array.from({ length: session.settings.interval }, (_, i) =>
+      i < session.completed ? "●" : i === session.completed ? "◉" : "○",
+    ).join(" ");
     return (
       <Box
         width={columns}
@@ -83,14 +105,14 @@ export function terminal(
         overflow="hidden"
       >
         <Box justifyContent="space-between">
-          <Text bold color="green">
+          <Text bold color={accent}>
             STILL
           </Text>
           <Text>
-            {phaseNames[session.phase]}{" "}
+            <Text color={accent}>{phaseNames[session.phase]}</Text>{" "}
             <Text bold>{clock(session.remaining)}</Text>{" "}
-            {session.deadline ? "running" : "paused"} {session.completed}/
-            {session.settings.interval}
+            <Text dimColor>{session.deadline ? "running" : "paused"}</Text>{" "}
+            <Text color={accent}>{cycleDots}</Text>
           </Text>
         </Box>
         <Text dimColor wrap="truncate-end">
@@ -98,7 +120,7 @@ export function terminal(
         </Text>
         <Box
           borderStyle="round"
-          borderColor="green"
+          borderColor={accent}
           paddingX={1}
           flexDirection="column"
         >
@@ -108,98 +130,78 @@ export function terminal(
           </Text>
           <Box gap={2} flexWrap="wrap">
             <Text dimColor={searching || !music}>[h] Previous</Text>
-            <Text bold color={searching ? "gray" : "green"}>
+            <Text bold color={searching ? "gray" : accent}>
               {`[Space] ${session.playing ? "Pause" : "Play"}`}
             </Text>
             <Text dimColor={searching || !music}>[l] Next</Text>
+            <Text dimColor>
+              [-/+] Vol {session.settings.volume}% · [/] Fade{" "}
+              {session.settings.crossfade}s · Queue{" "}
+              {session.queue.length ? Math.max(0, session.index + 1) : 0}/
+              {session.queue.length}
+            </Text>
           </Box>
-          <Text dimColor>
-            [-/+] Volume {session.settings.volume}% · [ / ] Crossfade{" "}
-            {session.settings.crossfade}s · Queue{" "}
-            {session.queue.length ? Math.max(0, session.index + 1) : 0}/
-            {session.queue.length}
-          </Text>
-          <Text color={session.player ? "green" : "yellow"} wrap="truncate-end">
+          <Text color={session.player ? accent : "yellow"} wrap="truncate-end">
             Audio:{" "}
             {session.player ? "connected" : "waiting for the OBS overlay"}
           </Text>
         </Box>
-        <Box
-          borderStyle="round"
-          borderColor="gray"
-          paddingX={1}
-          gap={2}
-          flexWrap="wrap"
-        >
-          <Text bold color="green">
-            PLAYBACK
-          </Text>
-          <Text>
-            <Text color="green">[Space]</Text>{" "}
-            {session.playing ? "Pause" : "Play"}
-          </Text>
-          <Text>
-            <Text color="green">[h]</Text> Previous
-          </Text>
-          <Text>
-            <Text color="green">[l]</Text> Next
-          </Text>
-          <Text>
-            <Text color="green">[−/+]</Text> Volume
-          </Text>
-          <Text>
-            <Text color="green">[Enter]</Text> Play selection
-          </Text>
-        </Box>
-        <Box gap={2} flexWrap="wrap">
+        <Box gap={1} flexWrap="wrap">
           {(["local", "openlofi", "royalty"] as const).map((source, i) => (
             <Text
               key={source}
               bold={!timerPanel && provider === source}
-              color={!timerPanel && provider === source ? "green" : undefined}
+              color={!timerPanel && provider === source ? accent : undefined}
               inverse={!timerPanel && provider === source}
             >
-              {i + 1}{" "}
-              {
+              {` ${i + 1} ${
                 {
                   local: "Local",
                   openlofi: "Open Lo-Fi",
                   royalty: "RoyaltyMusicFree",
                 }[source]
-              }
+              } `}
             </Text>
           ))}
           <Text
             bold={timerPanel}
-            color={timerPanel ? "green" : undefined}
+            color={timerPanel ? accent : undefined}
             inverse={timerPanel}
           >
-            4 Timer
+            {" 4 Timer "}
           </Text>
         </Box>
         <Box
           borderStyle="round"
-          borderColor={searching || timerPanel ? "green" : "gray"}
+          borderColor={searching || timerPanel ? accent : "gray"}
           paddingX={1}
           flexDirection="column"
           flexGrow={1}
           overflow="hidden"
         >
           {timerPanel ? (
-            <Box flexDirection="column">
-              <Text bold color="green">
+            <Box flexDirection="column" gap={1}>
+              <Text bold color={accent}>
                 4 TIMER
               </Text>
-              <Text>
-                {phaseNames[session.phase]} · {clock(session.remaining)} ·{" "}
-                {session.deadline === null ? "paused" : "running"}
-              </Text>
-              <Text>[s] Start [p] Pause [n] Skip</Text>
-              <Text>[Enter/t] Start / pause [r] Reset</Text>
-              <Text dimColor>
-                {session.completed}/{session.settings.interval} focus sessions
-                complete
-              </Text>
+              <Box flexDirection="column">
+                <Text>
+                  <Text color={accent}>{phaseNames[session.phase]}</Text> ·{" "}
+                  <Text bold>{clock(session.remaining)}</Text> ·{" "}
+                  <Text dimColor>
+                    {session.deadline === null ? "paused" : "running"}
+                  </Text>
+                </Text>
+                <Text color={accent}>{progressBar}</Text>
+                <Text dimColor>
+                  {cycleDots} · {session.completed}/{session.settings.interval}{" "}
+                  focus sessions complete
+                </Text>
+              </Box>
+              <Box flexDirection="column">
+                <Text>[s] Start · [p] Pause · [n] Skip</Text>
+                <Text>[Enter/t] Start / pause · [r] Reset</Text>
+              </Box>
             </Box>
           ) : (
             <>
@@ -235,7 +237,7 @@ export function terminal(
                     <Text
                       key={item.id}
                       inverse={start + i === cursor}
-                      color={start + i === cursor ? "green" : undefined}
+                      color={start + i === cursor ? accent : undefined}
                       wrap="truncate-end"
                     >
                       {start + i === cursor ? "›" : " "} {clean(item.title)}{" "}

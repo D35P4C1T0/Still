@@ -108,6 +108,7 @@
   });
 </script>
 
+<svelte:window onkeydown={event => { if (event.key === 'Escape' && showSettings) showSettings = false; }} />
 <svelte:head><title>{overlay ? 'Still — overlay' : 'Still'}</title></svelte:head>
 
 <div class="room" class:light={settings.theme === 'light'} class:break-time={snapshot?.timer.phase === 'short' || snapshot?.timer.phase === 'long'} class:long-break={snapshot?.timer.phase === 'long'} class:overlay class:static={!settings.motion} class:transparent={overlay && settings.transparent}>
@@ -137,8 +138,10 @@
       {#key current.id}
       <section class="now-playing" aria-label="Music player" transition:fade={{ duration: reducedMotion.current ? 0 : 400 }}>
         <div class="track-details">
-          <svg class="music-note" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13M9 8l11-2" /><ellipse cx="6" cy="18" rx="3" ry="2" /><ellipse cx="17" cy="16" rx="3" ry="2" /></svg>
-          <span class="track-title" title={current.title}>{current.title}</span>
+          <div class="track-title-row">
+            <svg class="music-note" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13M9 8l11-2" /><ellipse cx="6" cy="18" rx="3" ry="2" /><ellipse cx="17" cy="16" rx="3" ry="2" /></svg>
+            <span class="track-title" title={current.title}>{current.title}</span>
+          </div>
           <span class="track-meta">{current.artist} · {current.category}</span>
           {#if !overlay && current.source}
             <a class="track-source" href={current.source} target="_blank" rel="noreferrer">Source: {musicSources[current.provider]}</a>
@@ -163,6 +166,7 @@
   {#if !overlay}
     {#if error}<div class="error" role="alert">{error}<button aria-label="Dismiss error" onclick={() => error = ''}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>{/if}
     {#if showSettings}
+      <div class="settings-backdrop" aria-hidden="true" onclick={() => showSettings = false}></div>
       <aside class="settings" aria-label="Session settings">
         <div class="settings-heading"><h2>Settings</h2><button class="icon-button" aria-label="Close settings" onclick={() => showSettings = false}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
         <form onsubmit={saveSettings}>
